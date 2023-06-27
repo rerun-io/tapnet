@@ -22,7 +22,7 @@ def build_model(frames, query_points):
     return outputs
 
 
-def preprocess_frames(frames):
+def preprocess_frames(frames: np.ndarray):
     """Preprocess frames to model inputs.
 
     Args:
@@ -94,10 +94,27 @@ def sample_random_points(frame_max_idx, height, width, num_points):
     return points
 
 
+def log_query(query_frame: np.ndarray, query_xys: np.ndarray) -> None:
+    rr.set_time_seconds("timestamp", 0.0)
+    rr.set_time_sequence("frameid", 0)
+    rr.log_image("query_frame", query_frame)
+    rr.log_points("query_frame/query_points", query_xys, radii=5)
+
+
+def log_video(frames, fps) -> None:
+    for i, frame in enumerate(frames):
+        rr.set_time_seconds("timestamp", i * 1.0 / fps)
+        rr.set_time_sequence("frameid", i)
+        rr.log_image("current_frame", frame)
+
+
+# TODO argparse this stuff
 resize_height = 256
-resize_width = 256  # @param {type: "integer"}
-num_points = 20  # @param {type: "integer"}
+resize_width = 256
+num_points = 20  # TODO optionally pick grid points from foreground mask
 video_file = "./tennis-vest.mp4"
+
+rr.init("track test", spawn=True)
 
 model = hk.transform_with_state(build_model)
 model_apply = jax.jit(model.apply)
@@ -107,10 +124,22 @@ params, state = ckpt_state["params"], ckpt_state["state"]
 
 video = media.read_video(video_file)
 
+log_video(video, video.metadata.fps)
+
 height, width = video.shape[1:3]
-frames = media.resize_video(video, (resize_height, resize_width))
-query_points = sample_random_points(0, frames.shape[1], frames.shape[2], num_points)
-tracks, visibles = inference(frames, query_points)
+resized_frames = media.resize_video(video, (resize_height, resize_width))
+resized_query_tijs = sample_random_points(
+    0, resized_frames.shape[1], resized_frames.shape[2], num_points
+)  # t, row, col
+
+original_query_xys = (
+    resized_query_tijs[:, 2:0:-1]
+    / np.array([resize_width, resize_height])
+    * np.array([width, height])
+)
+log_query(video[0], original_query_xys)
+
+tracks, visibles = inference(resized_frames, resized_query_tijs)
 
 tracks = transforms.convert_grid_coordinates(
     tracks, (resize_width, resize_height), (width, height)
@@ -123,8 +152,6 @@ with media.VideoWriter(
         writer.add_image(image)
 
 t = np.linspace(0, 5, 1000)
-
-# rr.init("track test")
 
 # xys = np.stack((np.cos(t), np.sin(t)), axis=-1)
 # print(xys.shape)
