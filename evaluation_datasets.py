@@ -26,7 +26,6 @@ from typing import Iterable, Mapping, Tuple, Union
 
 from absl import logging
 
-from kubric.challenges.point_tracking import dataset
 import mediapy as media
 import numpy as np
 from PIL import Image
@@ -435,6 +434,7 @@ def create_kubric_eval_train_dataset(
     max_dataset_size: int = 100,
 ) -> Iterable[DatasetElement]:
   """Dataset for evaluating performance on Kubric training data."""
+  from kubric.challenges.point_tracking import dataset
   res = dataset.create_point_tracking_dataset(
       split='train',
       train_size=TRAIN_SIZE[1:3],
