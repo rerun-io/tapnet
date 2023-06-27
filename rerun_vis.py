@@ -98,7 +98,7 @@ def log_query(query_frame: np.ndarray, query_xys: np.ndarray) -> None:
     rr.set_time_seconds("timestamp", 0.0)
     rr.set_time_sequence("frameid", 0)
     rr.log_image("query_frame", query_frame)
-    rr.log_points("query_frame/query_points", query_xys, radii=5)
+    rr.log_points("query_frame/query_points", query_xys, radii=4)
 
 
 def log_video(frames, fps) -> None:
@@ -108,11 +108,33 @@ def log_video(frames, fps) -> None:
         rr.log_image("current_frame", frame)
 
 
+def log_tracks(tracks: np.ndarray, fps) -> None:
+    # tracks has shape (num_tracks, num_frames, 2)
+    num_tracks = tracks.shape[0]
+    num_frames = tracks.shape[1]
+
+    for frame_id in range(num_frames):
+        rr.set_time_seconds("timestamp", frame_id * 1.0 / fps)
+        rr.set_time_sequence("frameid", frame_id)
+        rr.log_points("current_frame/current_points", tracks[:, frame_id], radii=4)
+
+        if frame_id == 0:
+            continue
+
+        for track_id in range(num_tracks):
+            rr.log_line_segments(
+                f"current_frame/tracks/#{track_id}",
+                tracks[track_id, frame_id - 1 : frame_id + 1],
+            )
+
+
 # TODO argparse this stuff
-resize_height = 256
-resize_width = 256
+# TODO option to save as rrd instead of spawn
+resize_height = 100
+resize_width = 100
 num_points = 20  # TODO optionally pick grid points from foreground mask
 video_file = "./tennis-vest.mp4"
+video_out_file = "./tennis-vest-out.mp4"
 
 rr.init("track test", spawn=True)
 
@@ -123,10 +145,12 @@ ckpt_state = np.load(checkpoint_path, allow_pickle=True).item()
 params, state = ckpt_state["params"], ckpt_state["state"]
 
 video = media.read_video(video_file)
+fps = video.metadata.fps
 
-log_video(video, video.metadata.fps)
+log_video(video, fps)
 
 height, width = video.shape[1:3]
+
 resized_frames = media.resize_video(video, (resize_height, resize_width))
 resized_query_tijs = sample_random_points(
     0, resized_frames.shape[1], resized_frames.shape[2], num_points
@@ -145,8 +169,10 @@ tracks = transforms.convert_grid_coordinates(
     tracks, (resize_width, resize_height), (width, height)
 )
 out_video = viz_utils.paint_point_track(video, tracks, visibles)
+log_tracks(tracks, fps)
+
 with media.VideoWriter(
-    "./tennis-vest-out.mp4", out_video.shape[1:3], fps=video.metadata.fps
+    video_out_file, out_video.shape[1:3], fps=video.metadata.fps
 ) as writer:
     for image in out_video:
         writer.add_image(image)
