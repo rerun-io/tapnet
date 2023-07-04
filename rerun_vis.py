@@ -5,6 +5,7 @@ import mediapy as media
 import numpy as np
 import rerun as rr
 import tree
+import cv2
 
 from tapnet import tapir_model
 from tapnet.utils import transforms, viz_utils
@@ -130,9 +131,14 @@ def log_tracks(tracks: np.ndarray, fps) -> None:
 
 # TODO argparse this stuff
 # TODO option to save as rrd instead of spawn
-resize_height = 100
-resize_width = 100
-num_points = 20  # TODO optionally pick grid points from foreground mask
+resize_factor = 0.5
+num_points = 20
+
+# settings for grid points on mask
+mask_file = "./tennis-vest.png"
+mask_id = 2
+grid_spacing = 20
+
 video_file = "./tennis-vest.mp4"
 video_out_file = "./tennis-vest-out.mp4"
 
@@ -149,24 +155,40 @@ fps = video.metadata.fps
 
 log_video(video, fps)
 
-height, width = video.shape[1:3]
-
-resized_frames = media.resize_video(video, (resize_height, resize_width))
-resized_query_tijs = sample_random_points(
-    0, resized_frames.shape[1], resized_frames.shape[2], num_points
-)  # t, row, col
-
-original_query_xys = (
-    resized_query_tijs[:, 2:0:-1]
-    / np.array([resize_width, resize_height])
-    * np.array([width, height])
+original_height, original_width = video.shape[1:3]
+resize_height = round(original_height * resize_factor)
+resize_width = round(original_width * resize_factor)
+ij_resize_factor = np.array([resize_height, resize_width]) / np.array(
+    [original_height, original_width]
 )
-log_query(video[0], original_query_xys)
+uv_resize_factor = ij_resize_factor[::-1]
+resized_frames = media.resize_video(video, (resize_height, resize_width))
+
+if mask_file is None:
+    resized_query_tijs = sample_random_points(
+        0, resized_frames.shape[1], resized_frames.shape[2], num_points
+    )  # t, row, col
+else:
+    mask = (media.read_image(mask_file) == mask_id).astype(np.uint8)
+    kernel = np.ones((7, 7), np.uint8)
+    mask = cv2.erode(mask, kernel)
+    ijs = np.indices(mask.shape)
+    grid_mask = np.all(ijs % grid_spacing == 0, axis=0)
+    original_query_ijs = np.stack(np.nonzero(mask * grid_mask), axis=-1)
+
+    resized_query_ijs = (original_query_ijs * ij_resize_factor).astype(np.int64)
+    num_points = len(resized_query_ijs)
+    resized_query_tijs = np.pad(resized_query_ijs, ((0, 0), (1, 0)))
+
+original_query_uvs = (
+    resized_query_tijs[:, 2:0:-1] / uv_resize_factor + 0.5
+)  # convert to continuous coordinates with pixel center being at 0.5
+log_query(video[0], original_query_uvs)
 
 tracks, visibles = inference(resized_frames, resized_query_tijs)
 
 tracks = transforms.convert_grid_coordinates(
-    tracks, (resize_width, resize_height), (width, height)
+    tracks, (resize_width, resize_height), (original_width, original_height)
 )
 out_video = viz_utils.paint_point_track(video, tracks, visibles)
 log_tracks(tracks, fps)
