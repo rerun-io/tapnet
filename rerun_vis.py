@@ -114,7 +114,9 @@ def log_video(frames, fps) -> None:
         rr.log_image("current_frame", frame)
 
 
-def log_tracks(tracks: np.ndarray, fps, colors: Optional[np.ndarray] = None) -> None:
+def log_tracks(
+    tracks: np.ndarray, visibles: np.ndarray, fps, colors: Optional[np.ndarray] = None
+) -> None:
     # tracks has shape (num_tracks, num_frames, 2)
     num_tracks = tracks.shape[0]
     num_frames = tracks.shape[1]
@@ -122,22 +124,30 @@ def log_tracks(tracks: np.ndarray, fps, colors: Optional[np.ndarray] = None) -> 
     for frame_id in range(num_frames):
         rr.set_time_seconds("timestamp", frame_id * 1.0 / fps)
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_points("current_frame/current_points", tracks[:, frame_id], radii=4, colors=colors)
+        rr.log_points(
+            "current_frame/current_points",
+            tracks[visibles[:, frame_id], frame_id],
+            radii=4,
+            colors=colors[visibles[:, frame_id]],
+        )
 
         if frame_id == 0:
             continue
 
         for track_id in range(num_tracks):
-            rr.log_line_segments(
-                f"current_frame/tracks/#{track_id}",
-                tracks[track_id, frame_id - 1 : frame_id + 1],
-                color=colors[track_id],
-            )
+            if visibles[track_id, frame_id - 1] and visibles[track_id, frame_id]:
+                rr.log_line_segments(
+                    f"current_frame/tracks/#{track_id}",
+                    tracks[track_id, frame_id - 1 : frame_id + 1],
+                    color=colors[track_id].tolist(),
+                )
+            else:
+                rr.log_cleared(f"current_frame/tracks/#{track_id}")
 
 
 # TODO argparse this stuff
 # TODO option to save as rrd instead of spawn
-resize_factor = 0.1
+resize_factor = 0.5
 num_points = 20
 
 # settings for grid points on mask
@@ -191,17 +201,16 @@ else:
     norm = matplotlib.colors.Normalize(
         vmin=original_query_ijs[:, 0].min(), vmax=original_query_ijs[:, 0].max()
     )
-    colors = []
-    for original_query_ij in original_query_ijs:
-        colors.append(cmap(norm(original_query_ij[0])))
-    color = np.array(colors)
+    colors = cmap(norm(original_query_ijs[:, 0]))
 
 original_query_uvs = (
     resized_query_tijs[:, 2:0:-1] / uv_resize_factor + 0.5
 )  # convert to continuous coordinates with pixel center being at 0.5
 log_query(video[0], original_query_uvs, colors)
 
+print("Running inference... ", end="")
 tracks, visibles = inference(resized_frames, resized_query_tijs)
+print("Done.")
 
 tracks = transforms.convert_grid_coordinates(
     tracks, (resize_width, resize_height), (original_width, original_height)
@@ -209,7 +218,7 @@ tracks = transforms.convert_grid_coordinates(
 out_video = viz_utils.paint_point_track(video, tracks, visibles)
 
 # TODO handle visibility
-log_tracks(tracks, fps, colors)
+log_tracks(tracks, visibles, fps, colors)
 
 with media.VideoWriter(
     video_out_file, out_video.shape[1:3], fps=video.metadata.fps
