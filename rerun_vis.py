@@ -57,7 +57,7 @@ def postprocess_occlusions(occlusions, expected_dist):
     return visibles
 
 
-def inference(frames, query_points):
+def inference(frames, query_points, highlight_track_id=None, fps=None):
     """Inference on one video.
 
     Args:
@@ -86,7 +86,25 @@ def inference(frames, query_points):
 
     # Binarize occlusions
     visibles = postprocess_occlusions(occlusions, expected_dist)
+
+    if highlight_track_id is not None:
+        log_track_scalars(
+            occlusions[highlight_track_id],
+            expected_dist[highlight_track_id],
+            visibles[highlight_track_id],
+            fps,
+        )
+
     return tracks, visibles
+
+
+def log_track_scalars(occlusions, expected_dists, visibles, fps):
+    for frame_id in range(len(occlusions)):
+        rr.set_time_seconds("timestamp", frame_id * 1.0 / fps)
+        rr.set_time_sequence("frameid", frame_id)
+        rr.log_scalar("occluded_prob", 1 - jax.nn.sigmoid(occlusions[frame_id]))
+        rr.log_scalar("accurate_prob", 1 - jax.nn.sigmoid(expected_dists[frame_id]))
+        rr.log_scalar("final_visible", visibles[frame_id])
 
 
 def sample_random_points(frame_max_idx, height, width, num_points):
@@ -147,13 +165,14 @@ def log_tracks(
 
 # TODO argparse this stuff
 # TODO option to save as rrd instead of spawn
-resize_factor = 0.5
+resize_factor = 0.1
 num_points = 20
 
 # settings for grid points on mask
 mask_file = "./tennis-vest.png"
 mask_id = 2
 grid_spacing = 20
+highlight_track_id = 39  # none to not highlight any
 
 video_file = "./tennis-vest.mp4"
 video_out_file = "./tennis-vest-out.mp4"
@@ -209,7 +228,9 @@ original_query_uvs = (
 log_query(video[0], original_query_uvs, colors)
 
 print("Running inference... ", end="")
-tracks, visibles = inference(resized_frames, resized_query_tijs)
+tracks, visibles = inference(
+    resized_frames, resized_query_tijs, highlight_track_id, fps
+)
 print("Done.")
 
 tracks = transforms.convert_grid_coordinates(
