@@ -14,7 +14,7 @@ from tapnet import tapir_model
 from tapnet.utils import transforms, viz_utils
 
 
-def build_model(frames, query_points):
+def build_model(frames, query_points, highlight_track_id):
     """Compute point tracks and occlusions given frames and query points."""
     model = tapir_model.TAPIR()
     outputs = model(
@@ -22,6 +22,7 @@ def build_model(frames, query_points):
         is_training=False,
         query_points=query_points,
         query_chunk_size=64,
+        highlight_track_id=highlight_track_id
     )
     return outputs
 
@@ -57,7 +58,7 @@ def postprocess_occlusions(occlusions, expected_dist):
     return visibles
 
 
-def inference(frames, query_points, highlight_track_id=None, fps=None):
+def inference(frames, query_points, highlight_track_id=None):
     """Inference on one video.
 
     Args:
@@ -76,13 +77,22 @@ def inference(frames, query_points, highlight_track_id=None, fps=None):
 
     # Model inference
     rng = jax.random.PRNGKey(42)
-    outputs, _ = model_apply(params, state, rng, frames, query_points)
+    outputs, _ = model_apply(
+        params,
+        state,
+        rng,
+        frames,
+        query_points,
+        highlight_track_id
+    )
     outputs = tree.map_structure(lambda x: np.array(x[0]), outputs)
     tracks, occlusions, expected_dist = (
         outputs["tracks"],
         outputs["occlusion"],
         outputs["expected_dist"],
     )
+    
+    # TODO log unrefined predictions
 
     # Binarize occlusions
     visibles = postprocess_occlusions(occlusions, expected_dist)
@@ -92,15 +102,13 @@ def inference(frames, query_points, highlight_track_id=None, fps=None):
             occlusions[highlight_track_id],
             expected_dist[highlight_track_id],
             visibles[highlight_track_id],
-            fps,
         )
 
     return tracks, visibles
 
 
-def log_track_scalars(occlusions, expected_dists, visibles, fps):
+def log_track_scalars(occlusions, expected_dists, visibles):
     for frame_id in range(len(occlusions)):
-        rr.set_time_seconds("timestamp", frame_id * 1.0 / fps)
         rr.set_time_sequence("frameid", frame_id)
         rr.log_scalar("occluded_prob", 1 - jax.nn.sigmoid(occlusions[frame_id]))
         rr.log_scalar("accurate_prob", 1 - jax.nn.sigmoid(expected_dists[frame_id]))
@@ -125,22 +133,20 @@ def log_query(
     rr.log_points("query_frame/query_points", query_xys, radii=4, colors=colors)
 
 
-def log_video(frames, fps) -> None:
+def log_video(frames) -> None:
     for i, frame in enumerate(frames):
-        rr.set_time_seconds("timestamp", i * 1.0 / fps)
         rr.set_time_sequence("frameid", i)
         rr.log_image("current_frame", frame)
 
 
 def log_tracks(
-    tracks: np.ndarray, visibles: np.ndarray, fps, colors: Optional[np.ndarray] = None
+    tracks: np.ndarray, visibles: np.ndarray, colors: Optional[np.ndarray] = None
 ) -> None:
     # tracks has shape (num_tracks, num_frames, 2)
     num_tracks = tracks.shape[0]
     num_frames = tracks.shape[1]
 
     for frame_id in range(num_frames):
-        rr.set_time_seconds("timestamp", frame_id * 1.0 / fps)
         rr.set_time_sequence("frameid", frame_id)
         rr.log_points(
             "current_frame/current_points",
@@ -165,7 +171,7 @@ def log_tracks(
 
 # TODO argparse this stuff
 # TODO option to save as rrd instead of spawn
-resize_factor = 0.1
+resize_factor = 0.5
 num_points = 20
 
 # settings for grid points on mask
@@ -180,15 +186,14 @@ video_out_file = "./tennis-vest-out.mp4"
 rr.init("track test", spawn=True)
 
 model = hk.transform_with_state(build_model)
-model_apply = jax.jit(model.apply)
+model_apply = model.apply  # can't use jit if we want to visualize inside the model
 checkpoint_path = "checkpoint/tapir_checkpoint.npy"
 ckpt_state = np.load(checkpoint_path, allow_pickle=True).item()
 params, state = ckpt_state["params"], ckpt_state["state"]
 
 video = media.read_video(video_file)
-fps = video.metadata.fps
 
-log_video(video, fps)
+log_video(video)
 
 original_height, original_width = video.shape[1:3]
 resize_height = round(original_height * resize_factor)
@@ -229,7 +234,7 @@ log_query(video[0], original_query_uvs, colors)
 
 print("Running inference... ", end="")
 tracks, visibles = inference(
-    resized_frames, resized_query_tijs, highlight_track_id, fps
+    resized_frames, resized_query_tijs, highlight_track_id
 )
 print("Done.")
 
@@ -239,7 +244,7 @@ tracks = transforms.convert_grid_coordinates(
 out_video = viz_utils.paint_point_track(video, tracks, visibles)
 
 # TODO handle visibility
-log_tracks(tracks, visibles, fps, colors)
+log_tracks(tracks, visibles, colors)
 
 with media.VideoWriter(
     video_out_file, out_video.shape[1:3], fps=video.metadata.fps
