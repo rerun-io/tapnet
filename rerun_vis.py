@@ -13,16 +13,18 @@ import tree
 from tapnet import tapir_model
 from tapnet.utils import transforms, viz_utils
 
+NUM_PIPS_ITER = 4
+
 
 def build_model(frames, query_points, highlight_track_id):
     """Compute point tracks and occlusions given frames and query points."""
-    model = tapir_model.TAPIR()
+    model = tapir_model.TAPIR(num_pips_iter=NUM_PIPS_ITER)
     outputs = model(
         video=frames,
         is_training=False,
         query_points=query_points,
         query_chunk_size=64,
-        highlight_track_id=highlight_track_id
+        highlight_track_id=highlight_track_id,
     )
     return outputs
 
@@ -78,12 +80,7 @@ def inference(frames, query_points, highlight_track_id=None):
     # Model inference
     rng = jax.random.PRNGKey(42)
     outputs, _ = model_apply(
-        params,
-        state,
-        rng,
-        frames,
-        query_points,
-        highlight_track_id
+        params, state, rng, frames, query_points, highlight_track_id
     )
     outputs = tree.map_structure(lambda x: np.array(x[0]), outputs)
     tracks, occlusions, expected_dist = (
@@ -91,28 +88,54 @@ def inference(frames, query_points, highlight_track_id=None):
         outputs["occlusion"],
         outputs["expected_dist"],
     )
-    
-    # TODO log unrefined predictions
+    unrefined_tracks, unrefined_occlusions, unrefined_expected_dist = (
+        outputs["unrefined_tracks"],
+        outputs["unrefined_occlusion"],
+        outputs["unrefined_expected_dist"],
+    )
 
-    # Binarize occlusions
+    # Initial predictions
+    unrefined_visibles_0 = postprocess_occlusions(
+        unrefined_occlusions[0], unrefined_expected_dist[0]
+    )
+    log_tracks(unrefined_tracks[0], unrefined_visibles_0, colors, "_initial")
+    if highlight_track_id is not None:
+        log_track_scalars(
+            unrefined_occlusions[0][highlight_track_id],
+            unrefined_expected_dist[0][highlight_track_id],
+            unrefined_visibles_0[highlight_track_id],
+            suffix="_initial",
+        )
+
+    # Refined (intermediate) predictions
+    # following are iterative refinements, which might have to be averaged over
+    # different resolutions, similar to final output (see tapir_model.py)
+    for i in range(NUM_PIPS_ITER - 1):
+        pass
+
+    # Final predictions
     visibles = postprocess_occlusions(occlusions, expected_dist)
-
+    log_tracks(tracks, visibles, colors, "_final")
     if highlight_track_id is not None:
         log_track_scalars(
             occlusions[highlight_track_id],
             expected_dist[highlight_track_id],
             visibles[highlight_track_id],
+            suffix="_final",
         )
-
     return tracks, visibles
 
 
-def log_track_scalars(occlusions, expected_dists, visibles):
+def log_track_scalars(occlusions, expected_dists, visibles, suffix=""):
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_scalar("occluded_prob", 1 - jax.nn.sigmoid(occlusions[frame_id]))
-        rr.log_scalar("accurate_prob", 1 - jax.nn.sigmoid(expected_dists[frame_id]))
-        rr.log_scalar("final_visible", visibles[frame_id])
+        rr.log_scalar(
+            "occluded_prob" + suffix, 1 - jax.nn.sigmoid(occlusions[frame_id])
+        )
+        rr.log_scalar(
+            "accurate_prob" + suffix, 1 - jax.nn.sigmoid(expected_dists[frame_id])
+        )
+        rr.log_scalar("visible" + suffix, visibles[frame_id])
 
 
 def sample_random_points(frame_max_idx, height, width, num_points):
@@ -127,7 +150,6 @@ def sample_random_points(frame_max_idx, height, width, num_points):
 def log_query(
     query_frame: np.ndarray, query_xys: np.ndarray, colors: Optional[np.ndarray] = None
 ) -> None:
-    rr.set_time_seconds("timestamp", 0.0)
     rr.set_time_sequence("frameid", 0)
     rr.log_image("query_frame", query_frame)
     rr.log_points("query_frame/query_points", query_xys, radii=4, colors=colors)
@@ -136,12 +158,19 @@ def log_query(
 def log_video(frames) -> None:
     for i, frame in enumerate(frames):
         rr.set_time_sequence("frameid", i)
-        rr.log_image("current_frame", frame)
+        rr.log_image("frame", frame)
 
 
 def log_tracks(
-    tracks: np.ndarray, visibles: np.ndarray, colors: Optional[np.ndarray] = None
+    tracks: np.ndarray,
+    visibles: np.ndarray,
+    colors: Optional[np.ndarray] = None,
+    suffix="",
 ) -> None:
+    tracks = transforms.convert_grid_coordinates(
+        tracks, (resize_width, resize_height), (original_width, original_height)
+    )
+
     # tracks has shape (num_tracks, num_frames, 2)
     num_tracks = tracks.shape[0]
     num_frames = tracks.shape[1]
@@ -149,7 +178,7 @@ def log_tracks(
     for frame_id in range(num_frames):
         rr.set_time_sequence("frameid", frame_id)
         rr.log_points(
-            "current_frame/current_points",
+            "frame/points" + suffix,
             tracks[visibles[:, frame_id], frame_id],
             radii=4,
             colors=colors[visibles[:, frame_id]],
@@ -161,12 +190,12 @@ def log_tracks(
         for track_id in range(num_tracks):
             if visibles[track_id, frame_id - 1] and visibles[track_id, frame_id]:
                 rr.log_line_segments(
-                    f"current_frame/tracks/#{track_id}",
+                    f"frame/tracks{suffix}/#{track_id}",
                     tracks[track_id, frame_id - 1 : frame_id + 1],
                     color=colors[track_id].tolist(),
                 )
             else:
-                rr.log_cleared(f"current_frame/tracks/#{track_id}")
+                rr.log_cleared(f"frame/tracks{suffix}/#{track_id}")
 
 
 # TODO argparse this stuff
@@ -233,18 +262,13 @@ original_query_uvs = (
 log_query(video[0], original_query_uvs, colors)
 
 print("Running inference... ", end="")
-tracks, visibles = inference(
-    resized_frames, resized_query_tijs, highlight_track_id
-)
+tracks, visibles = inference(resized_frames, resized_query_tijs, highlight_track_id)
 print("Done.")
 
 tracks = transforms.convert_grid_coordinates(
     tracks, (resize_width, resize_height), (original_width, original_height)
 )
 out_video = viz_utils.paint_point_track(video, tracks, visibles)
-
-# TODO handle visibility
-log_tracks(tracks, visibles, colors)
 
 with media.VideoWriter(
     video_out_file, out_video.shape[1:3], fps=video.metadata.fps
@@ -253,12 +277,3 @@ with media.VideoWriter(
         writer.add_image(image)
 
 t = np.linspace(0, 5, 1000)
-
-# xys = np.stack((np.cos(t), np.sin(t)), axis=-1)
-# print(xys.shape)
-
-# rr.init("track_vis", spawn=True)
-# for t, xy in zip(t, xys):
-#     rr.set_time_seconds("time", t)
-#     rr.log_point("current_point", xy, radius=0.01, color=[0.9, 0.2, 0.2])
-#     rr.log_point("track", xy, radius=0.005, color=[0.9, 0.2, 0.2])
