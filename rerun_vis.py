@@ -1,5 +1,6 @@
 """Visualize TAPIR result on a video with rerun."""
-from typing import Optional
+import argparse
+from typing import Optional, Tuple
 
 import cv2
 import haiku as hk
@@ -11,12 +12,12 @@ import rerun as rr
 import tree
 
 from tapnet import tapir_model
-from tapnet.utils import transforms, viz_utils
+from tapnet.utils import transforms
 
 NUM_PIPS_ITER = 4
 
 
-def build_model(frames, query_points, highlight_track_id):
+def build_model(frames: np.ndarray, query_points: np.ndarray, highlight_track_id: int):
     """Compute point tracks and occlusions given frames and query points."""
     model = tapir_model.TAPIR(num_pips_iter=NUM_PIPS_ITER)
     outputs = model(
@@ -60,7 +61,9 @@ def postprocess_occlusions(occlusions, expected_dist):
     return visibles
 
 
-def inference(frames, query_points, highlight_track_id=None):
+def inference(
+    frames, query_points, resize_wh, original_wh, highlight_track_id=None, colors=None
+):
     """Inference on one video.
 
     Args:
@@ -71,6 +74,12 @@ def inference(frames, query_points, highlight_track_id=None):
       tracks: [num_points, 3], [-1, 1], [t, y, x]
       visibles: [num_points, num_frames], bool
     """
+    model = hk.transform_with_state(build_model)
+    model_apply = model.apply  # can't use jit if we want to visualize inside the model
+    checkpoint_path = "checkpoint/tapir_checkpoint.npy"
+    ckpt_state = np.load(checkpoint_path, allow_pickle=True).item()
+    params, state = ckpt_state["params"], ckpt_state["state"]
+
     # Preprocess video to match model inputs format
     frames = preprocess_frames(frames)
     num_frames, height, width = frames.shape[0:3]
@@ -83,7 +92,7 @@ def inference(frames, query_points, highlight_track_id=None):
         params, state, rng, frames, query_points, highlight_track_id
     )
     outputs = tree.map_structure(lambda x: np.array(x[0]), outputs)
-    log_outputs(outputs)
+    log_outputs(outputs, highlight_track_id, colors, resize_wh, original_wh)
 
     tracks, occlusions, expected_dist = (
         outputs["tracks"],
@@ -95,7 +104,13 @@ def inference(frames, query_points, highlight_track_id=None):
     return tracks, visibles
 
 
-def log_outputs(outputs: dict) -> None:
+def log_outputs(
+    outputs: dict,
+    highlight_track_id: int,
+    colors: np.ndarray,
+    resize_wh: Tuple[int],
+    original_wh: Tuple[int],
+) -> None:
     """Log outputs of TAPIR model to rerun."""
     tracks, occlusions, expected_dist = (
         outputs["tracks"],
@@ -112,7 +127,14 @@ def log_outputs(outputs: dict) -> None:
     unrefined_visibles_0 = postprocess_occlusions(
         unrefined_occlusions[0], unrefined_expected_dist[0]
     )
-    log_tracks(unrefined_tracks[0], unrefined_visibles_0, colors, "_initial")
+    log_tracks(
+        unrefined_tracks[0],
+        unrefined_visibles_0,
+        resize_wh,
+        original_wh,
+        colors,
+        "_initial",
+    )
     if highlight_track_id is not None:
         log_track_scalars(
             unrefined_occlusions[0][highlight_track_id],
@@ -129,7 +151,7 @@ def log_outputs(outputs: dict) -> None:
         tra = np.mean(unrefined_tracks[i::NUM_PIPS_ITER], axis=0)
         exp_d = np.mean(unrefined_expected_dist[i::NUM_PIPS_ITER], axis=0)
         vis = postprocess_occlusions(occ, exp_d)
-        log_tracks(tra, vis, colors, f"_{i}")
+        log_tracks(tra, vis, resize_wh, original_wh, colors, f"_{i}")
         if highlight_track_id is not None:
             log_track_scalars(
                 occ[highlight_track_id],
@@ -140,7 +162,7 @@ def log_outputs(outputs: dict) -> None:
 
     # Final predictions
     visibles = postprocess_occlusions(occlusions, expected_dist)
-    log_tracks(tracks, visibles, colors, "_final")
+    log_tracks(tracks, visibles, resize_wh, original_wh, colors, "_final")
     if highlight_track_id is not None:
         log_track_scalars(
             occlusions[highlight_track_id],
@@ -150,7 +172,9 @@ def log_outputs(outputs: dict) -> None:
         )
 
 
-def log_track_scalars(occlusions, expected_dists, visibles, suffix=""):
+def log_track_scalars(
+    occlusions: np.ndarray, expected_dists: np.ndarray, visibles: np.ndarray, suffix=""
+) -> None:
     """Log scalars associated with track to rerun."""
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
@@ -169,10 +193,10 @@ def log_query(
     """Log query image and points to rerun."""
     rr.set_time_sequence("frameid", 0)
     rr.log_image("query_frame", query_frame)
-    rr.log_points("query_frame/query_points", query_xys, radii=4, colors=colors)
+    rr.log_points("query_frame/query_points", query_xys, radii=5, colors=colors)
 
 
-def log_video(frames) -> None:
+def log_video(frames: np.ndarray) -> None:
     """Log video frames to rerun."""
     for i, frame in enumerate(frames):
         rr.set_time_sequence("frameid", i)
@@ -182,13 +206,13 @@ def log_video(frames) -> None:
 def log_tracks(
     tracks: np.ndarray,
     visibles: np.ndarray,
+    resize_wh=Tuple[int],
+    original_wh=Tuple[int],
     colors: Optional[np.ndarray] = None,
     suffix="",
 ) -> None:
     """Log predicted point tracks to rerun."""
-    tracks = transforms.convert_grid_coordinates(
-        tracks, (resize_width, resize_height), (original_width, original_height)
-    )
+    tracks = transforms.convert_grid_coordinates(tracks, resize_wh, original_wh)
 
     # tracks has shape (num_tracks, num_frames, 2)
     num_tracks = tracks.shape[0]
@@ -199,7 +223,7 @@ def log_tracks(
         rr.log_points(
             "frame/points" + suffix,
             tracks[visibles[:, frame_id], frame_id],
-            radii=4,
+            radii=5,
             colors=colors[visibles[:, frame_id]],
         )
 
@@ -226,82 +250,91 @@ def sample_random_points(frame_max_idx, height, width, num_points):
     return points
 
 
-# TODO argparse this stuff
-# TODO option to save as rrd instead of spawn
-resize_factor = 0.5
-num_points = 20
+def main():
+    """Parse argument, prepare input, and run inference."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resize_factor", type=float, default=0.5)
+    parser.add_argument("--num_points", type=int, default=20)
+    parser.add_argument("--mask_file", default=None)
+    parser.add_argument("--mask_id", type=int, default=1)
+    parser.add_argument("--grid_spacing", type=int, default=20)
+    parser.add_argument("--highlight_track_id", type=int, default=None)
+    parser.add_argument("--highlight_track_color", action="store_true")
+    parser.add_argument("--video_file", required=True)
+    parser.add_argument("--rrd_file", default=None)
+    args = parser.parse_args()
 
-# settings for grid points on mask
-mask_file = "./tennis-vest.png"
-mask_id = 2
-grid_spacing = 20
-highlight_track_id = 39  # none to not highlight any
+    resize_factor = args.resize_factor
+    num_points = args.num_points
+    rrd_file = args.rrd_file
+    mask_file = args.mask_file
+    mask_id = args.mask_id
+    grid_spacing = args.grid_spacing
+    highlight_track_id = args.highlight_track_id
+    highlight_track_color = args.highlight_track_color
+    video_file = args.video_file
+    spawn = rrd_file is None
 
-video_file = "./tennis-vest.mp4"
-video_out_file = "./tennis-vest-out.mp4"
+    rr.init("TAPIR", spawn=spawn)
+    if rrd_file is not None:
+        rr.save(rrd_file)
 
-rr.init("track test", spawn=True)
+    video = media.read_video(video_file)
 
-model = hk.transform_with_state(build_model)
-model_apply = model.apply  # can't use jit if we want to visualize inside the model
-checkpoint_path = "checkpoint/tapir_checkpoint.npy"
-ckpt_state = np.load(checkpoint_path, allow_pickle=True).item()
-params, state = ckpt_state["params"], ckpt_state["state"]
+    log_video(video)
 
-video = media.read_video(video_file)
+    original_height, original_width = video.shape[1:3]
+    resize_height = round(original_height * resize_factor)
+    resize_width = round(original_width * resize_factor)
+    ij_resize_factor = np.array([resize_height, resize_width]) / np.array(
+        [original_height, original_width]
+    )
+    uv_resize_factor = ij_resize_factor[::-1]
+    resized_frames = media.resize_video(video, (resize_height, resize_width))
 
-log_video(video)
+    if mask_file is None:
+        resized_query_tijs = sample_random_points(
+            0, resized_frames.shape[1], resized_frames.shape[2], num_points
+        )  # t, row, col
+    else:
+        mask = (media.read_image(mask_file) == mask_id).astype(np.uint8)
+        kernel = np.ones((7, 7), np.uint8)
+        mask = cv2.erode(mask, kernel)
+        ijs = np.indices(mask.shape)
+        grid_mask = np.all(ijs % grid_spacing == 0, axis=0)
+        original_query_ijs = np.stack(np.nonzero(mask * grid_mask), axis=-1)
 
-original_height, original_width = video.shape[1:3]
-resize_height = round(original_height * resize_factor)
-resize_width = round(original_width * resize_factor)
-ij_resize_factor = np.array([resize_height, resize_width]) / np.array(
-    [original_height, original_width]
-)
-uv_resize_factor = ij_resize_factor[::-1]
-resized_frames = media.resize_video(video, (resize_height, resize_width))
-
-if mask_file is None:
-    resized_query_tijs = sample_random_points(
-        0, resized_frames.shape[1], resized_frames.shape[2], num_points
-    )  # t, row, col
-    colors = None
-else:
-    mask = (media.read_image(mask_file) == mask_id).astype(np.uint8)
-    kernel = np.ones((7, 7), np.uint8)
-    mask = cv2.erode(mask, kernel)
-    ijs = np.indices(mask.shape)
-    grid_mask = np.all(ijs % grid_spacing == 0, axis=0)
-    original_query_ijs = np.stack(np.nonzero(mask * grid_mask), axis=-1)
-
-    resized_query_ijs = (original_query_ijs * ij_resize_factor).astype(np.int64)
-    num_points = len(resized_query_ijs)
-    resized_query_tijs = np.pad(resized_query_ijs, ((0, 0), (1, 0)))
+        resized_query_ijs = (original_query_ijs * ij_resize_factor).astype(np.int64)
+        num_points = len(resized_query_ijs)
+        resized_query_tijs = np.pad(resized_query_ijs, ((0, 0), (1, 0)))
 
     cmap = matplotlib.colormaps["rainbow"]
     norm = matplotlib.colors.Normalize(
-        vmin=original_query_ijs[:, 0].min(), vmax=original_query_ijs[:, 0].max()
+        vmin=resized_query_tijs[:, 1].min(), vmax=resized_query_tijs[:, 1].max()
     )
-    colors = cmap(norm(original_query_ijs[:, 0]))
+    colors = cmap(norm(resized_query_tijs[:, 1]))
 
-original_query_uvs = (
-    resized_query_tijs[:, 2:0:-1] / uv_resize_factor + 0.5
-)  # convert to continuous coordinates with pixel center being at 0.5
-log_query(video[0], original_query_uvs, colors)
+    if highlight_track_id is not None and highlight_track_color:
+        mask = np.ones(len(colors), bool)
+        mask[highlight_track_id] = 0
+        colors[mask] = 0.3
 
-print("Running inference... ", end="")
-tracks, visibles = inference(resized_frames, resized_query_tijs, highlight_track_id)
-print("Done.")
+    original_query_uvs = (
+        resized_query_tijs[:, 2:0:-1] / uv_resize_factor + 0.5
+    )  # convert to continuous coordinates with pixel center being at 0.5
+    log_query(video[0], original_query_uvs, colors)
 
-tracks = transforms.convert_grid_coordinates(
-    tracks, (resize_width, resize_height), (original_width, original_height)
-)
-out_video = viz_utils.paint_point_track(video, tracks, visibles)
+    print("Running inference... ", end="")
+    inference(
+        resized_frames,
+        resized_query_tijs,
+        (resize_width, resize_height),
+        (original_width, original_height),
+        highlight_track_id,
+        colors,
+    )
+    print("Done.")
 
-with media.VideoWriter(
-    video_out_file, out_video.shape[1:3], fps=video.metadata.fps
-) as writer:
-    for image in out_video:
-        writer.add_image(image)
 
-t = np.linspace(0, 5, 1000)
+if __name__ == "__main__":
+    main()
