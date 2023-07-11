@@ -110,8 +110,19 @@ def inference(frames, query_points, highlight_track_id=None):
     # Refined (intermediate) predictions
     # following are iterative refinements, which might have to be averaged over
     # different resolutions, similar to final output (see tapir_model.py)
-    for i in range(NUM_PIPS_ITER - 1):
-        pass
+    for i in range(1, NUM_PIPS_ITER - 1):
+        occ = np.mean(unrefined_occlusions[i::NUM_PIPS_ITER], axis=0)
+        tra = np.mean(unrefined_tracks[i::NUM_PIPS_ITER], axis=0)
+        exp_d = np.mean(unrefined_expected_dist[i::NUM_PIPS_ITER], axis=0)
+        vis = postprocess_occlusions(occ, exp_d)
+        log_tracks(tra, vis, colors, f"_{i}")
+        if highlight_track_id is not None:
+            log_track_scalars(
+                occ[highlight_track_id],
+                exp_d[highlight_track_id],
+                vis[highlight_track_id],
+                suffix=f"_{i}",
+            )
 
     # Final predictions
     visibles = postprocess_occlusions(occlusions, expected_dist)
