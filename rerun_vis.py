@@ -83,6 +83,20 @@ def inference(frames, query_points, highlight_track_id=None):
         params, state, rng, frames, query_points, highlight_track_id
     )
     outputs = tree.map_structure(lambda x: np.array(x[0]), outputs)
+    log_outputs(outputs)
+
+    tracks, occlusions, expected_dist = (
+        outputs["tracks"],
+        outputs["occlusion"],
+        outputs["expected_dist"],
+    )
+    visibles = postprocess_occlusions(occlusions, expected_dist)
+
+    return tracks, visibles
+
+
+def log_outputs(outputs: dict) -> None:
+    """Log outputs of TAPIR model to rerun."""
     tracks, occlusions, expected_dist = (
         outputs["tracks"],
         outputs["occlusion"],
@@ -134,10 +148,10 @@ def inference(frames, query_points, highlight_track_id=None):
             visibles[highlight_track_id],
             suffix="_final",
         )
-    return tracks, visibles
 
 
 def log_track_scalars(occlusions, expected_dists, visibles, suffix=""):
+    """Log scalars associated with track to rerun."""
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
         rr.log_scalar(
@@ -149,24 +163,17 @@ def log_track_scalars(occlusions, expected_dists, visibles, suffix=""):
         rr.log_scalar("visible" + suffix, visibles[frame_id])
 
 
-def sample_random_points(frame_max_idx, height, width, num_points):
-    """Sample random points with (time, height, width) order."""
-    y = np.random.randint(0, height, (num_points, 1))
-    x = np.random.randint(0, width, (num_points, 1))
-    t = np.random.randint(0, frame_max_idx + 1, (num_points, 1))
-    points = np.concatenate((t, y, x), axis=-1).astype(np.int32)  # [num_points, 3]
-    return points
-
-
 def log_query(
     query_frame: np.ndarray, query_xys: np.ndarray, colors: Optional[np.ndarray] = None
 ) -> None:
+    """Log query image and points to rerun."""
     rr.set_time_sequence("frameid", 0)
     rr.log_image("query_frame", query_frame)
     rr.log_points("query_frame/query_points", query_xys, radii=4, colors=colors)
 
 
 def log_video(frames) -> None:
+    """Log video frames to rerun."""
     for i, frame in enumerate(frames):
         rr.set_time_sequence("frameid", i)
         rr.log_image("frame", frame)
@@ -178,6 +185,7 @@ def log_tracks(
     colors: Optional[np.ndarray] = None,
     suffix="",
 ) -> None:
+    """Log predicted point tracks to rerun."""
     tracks = transforms.convert_grid_coordinates(
         tracks, (resize_width, resize_height), (original_width, original_height)
     )
@@ -207,6 +215,15 @@ def log_tracks(
                 )
             else:
                 rr.log_cleared(f"frame/tracks{suffix}/#{track_id}")
+
+
+def sample_random_points(frame_max_idx, height, width, num_points):
+    """Sample random points with (time, height, width) order."""
+    y = np.random.randint(0, height, (num_points, 1))
+    x = np.random.randint(0, width, (num_points, 1))
+    t = np.random.randint(0, frame_max_idx + 1, (num_points, 1))
+    points = np.concatenate((t, y, x), axis=-1).astype(np.int32)  # [num_points, 3]
+    return points
 
 
 # TODO argparse this stuff
