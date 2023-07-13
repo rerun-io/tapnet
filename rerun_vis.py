@@ -179,10 +179,10 @@ def log_track_scalars(
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
         rr.log_scalar(
-            "occluded_prob" + suffix, 1 - jax.nn.sigmoid(occlusions[frame_id])
+            "occluded_prob" + suffix, jax.nn.sigmoid(occlusions[frame_id])
         )
         rr.log_scalar(
-            "accurate_prob" + suffix, 1 - jax.nn.sigmoid(expected_dists[frame_id])
+            "inaccurate_prob" + suffix, jax.nn.sigmoid(expected_dists[frame_id])
         )
         rr.log_scalar("visible" + suffix, visibles[frame_id])
 

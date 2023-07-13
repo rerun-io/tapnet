@@ -398,7 +398,7 @@ class TAPIR(hk.Module):
       )
       for frame_id, c in enumerate(cost_volume[:, 0, i]):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_image("cost", cmap(norm(c)))
+        rr.log_image("cost volume", cmap(norm(c)))
 
     cost_volume = einshape('tbnhw->(tbn)hw1', cost_volume)
 
@@ -410,6 +410,17 @@ class TAPIR(hk.Module):
 
     pos = einshape('t(bn)hw1->bnthw', pos_rshp, b=batch_size, n=num_points)
     pos = jax.nn.softmax(pos * self.softmax_temperature, axis=(-2, -1))
+
+    if highlight_track_id is not None:
+      i = highlight_track_id
+      cmap = matplotlib.colormaps["inferno"]
+      norm = matplotlib.colors.Normalize(
+          vmin=pos[0, i].min(), vmax=pos[0, i].max()
+      )
+      for frame_id, p in enumerate(pos[0, i]):
+        rr.set_time_sequence("frameid", frame_id)
+        rr.log_image("heatmap", cmap(norm(p)))
+
     points = model_utils.heatmaps_to_points(
         pos, im_shp, query_points=query_points
     )
