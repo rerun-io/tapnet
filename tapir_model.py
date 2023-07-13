@@ -18,12 +18,13 @@
 import functools
 from typing import Any, Dict, List, Mapping, Optional, Tuple, NamedTuple, Sequence
 
-import rerun as rr
 import chex
 from einshape import jax_einshape as einshape
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import matplotlib
+import rerun as rr
 
 from tapnet.models import resnet
 from tapnet.utils import model_utils
@@ -391,9 +392,13 @@ class TAPIR(hk.Module):
 
     if highlight_track_id is not None:
       i = highlight_track_id
+      cmap = matplotlib.colormaps["inferno"]
+      norm = matplotlib.colors.Normalize(
+          vmin=cost_volume[:, 0, i].min(), vmax=cost_volume[:, 0, i].max()
+      )
       for frame_id, c in enumerate(cost_volume[:, 0, i]):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_tensor("cost", c)
+        rr.log_image("cost", cmap(norm(c)))
 
     cost_volume = einshape('tbnhw->(tbn)hw1', cost_volume)
 
