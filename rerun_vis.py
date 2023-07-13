@@ -146,7 +146,7 @@ def log_outputs(
     # Refined (intermediate) predictions
     # following are iterative refinements, which might have to be averaged over
     # different resolutions, similar to final output (see tapir_model.py)
-    for i in range(1, NUM_PIPS_ITER - 1):
+    for i in range(1, NUM_PIPS_ITER):
         occ = np.mean(unrefined_occlusions[i::NUM_PIPS_ITER], axis=0)
         tra = np.mean(unrefined_tracks[i::NUM_PIPS_ITER], axis=0)
         exp_d = np.mean(unrefined_expected_dist[i::NUM_PIPS_ITER], axis=0)
