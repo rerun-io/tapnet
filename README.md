@@ -2,6 +2,8 @@ Welcome to the Rerun fork of Tracking Any Point (TAP).
 
 This fork has been modified to use [Rerun](https://github.com/rerun-io/rerun) for visualization.
 
+https://github.com/roym899/tapnet/assets/9785832/01b43b5c-60d5-4181-b02c-eedfa64dafb0
+
 [TAPIR](https://deepmind-tapir.github.io) is a two-stage algorithm which employs two stages: 1) a matching stage, which independently locates a suitable candidate point match for the query pointon every other frame, and (2) a refinement stage, which updates both the trajectory and query features based on local correlations. The resulting model is fast and surpasses all prior methods by a significant margin on the TAP-Vid benchmark.
 
 [TAP-Vid](https://arxiv.org/abs/2211.03726) is a benchmark for models that
