@@ -1,5 +1,8 @@
-Welcome to the official Google Deepmind repository for Tracking Any Point (TAP), home
-of the TAP-Vid Dataset and our top-performing TAPIR model.
+Welcome to the Rerun fork of Tracking Any Point (TAP).
+
+This fork has been modified to use [Rerun](https://github.com/rerun-io/rerun) for visualization.
+
+https://github.com/roym899/tapnet/assets/9785832/01b43b5c-60d5-4181-b02c-eedfa64dafb0
 
 [TAPIR](https://deepmind-tapir.github.io) is a two-stage algorithm which employs two stages: 1) a matching stage, which independently locates a suitable candidate point match for the query point on every other frame, and (2) a refinement stage, which updates both the trajectory and query features based on local correlations. The resulting model is fast and surpasses all prior methods by a significant margin on the TAP-Vid benchmark.
 
@@ -27,7 +30,7 @@ We provide two colab demos:
 1. [The standard TAPIR colab demo](https://colab.sandbox.google.com/github/deepmind/tapnet/blob/master/colabs/tapir_demo.ipynb): This is the most powerful TAPIR model that runs on a whole video at once. We mainly report the results of this model in the paper.
 2. [The online TAPIR colab demo](https://colab.sandbox.google.com/github/deepmind/tapnet/blob/master/colabs/causal_tapir_demo.ipynb): This is the sequential TAPIR model that allows for online tracking on points, which can be run in realtime on a GPU platform.
 
-### Running TAPIR Locally
+### Running TAPIR Locally on Video
 
 Clone the repository:
 
@@ -44,8 +47,8 @@ Install requirements for inference:
 Download the checkpoint
 
 ```bash
-mkdir checkpoints
-wget -P checkpoints https://storage.googleapis.com/dm-tapnet/causal_tapir_checkpoint.npy
+mkdir checkpoint
+wget -P checkpoint https://storage.googleapis.com/dm-tapnet/tapir_checkpoint.npy
 ```
 
 Add current path (parent directory of where TapNet is installed)
@@ -59,14 +62,10 @@ Refer to
 [the jax manual](https://github.com/google/jax#installation)
 to install the correct JAX version with CUDA.
 
-You can then run a pretrained causal TAPIR model on a live camera and select points to track:
-
+You can then run a pretrained TAPIR model on the provded example data (from [DAVIS](https://davischallenge.org/) dataset) and get a Rerun visualization of the result and intermediate steps with
 ```bash
-cd ..
-python3 ./tapnet/live_demo.py \
+python rerun_vis.py --video_file example_data/tennis-vest.mp4 --mask_file example_data/tennis-vest.png --mask_id 2 --highlight_track_id 39
 ```
-
-In our tests, we achieved ~17 fps on 480x480 images on a quadro RTX 4000.
 
 ## TAP-Vid Benchmark
 

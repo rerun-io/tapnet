@@ -23,6 +23,8 @@ from einshape import jax_einshape as einshape
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import matplotlib
+import rerun as rr
 
 from tapnet.models import resnet
 from tapnet.utils import model_utils
@@ -351,6 +353,7 @@ class TAPIR(hk.Module):
       feature_grid: chex.Array,
       query_points: Optional[chex.Array],
       im_shp: Optional[chex.Shape] = None,
+      highlight_track_id: Optional[int] = None,
   ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     """Converts features into tracks by computing a cost volume.
 
@@ -387,6 +390,16 @@ class TAPIR(hk.Module):
     shape = cost_volume.shape
     batch_size, num_points = cost_volume.shape[1:3]
 
+    if highlight_track_id is not None:
+      i = highlight_track_id
+      cmap = matplotlib.colormaps["inferno"]
+      norm = matplotlib.colors.Normalize(
+          vmin=cost_volume[:, 0, i].min(), vmax=cost_volume[:, 0, i].max()
+      )
+      for frame_id, c in enumerate(cost_volume[:, 0, i]):
+        rr.set_time_sequence("frameid", frame_id)
+        rr.log_image("cost volume", cmap(norm(c)))
+
     cost_volume = einshape('tbnhw->(tbn)hw1', cost_volume)
 
     occlusion = mods['hid1'](cost_volume)
@@ -397,6 +410,17 @@ class TAPIR(hk.Module):
 
     pos = einshape('t(bn)hw1->bnthw', pos_rshp, b=batch_size, n=num_points)
     pos = jax.nn.softmax(pos * self.softmax_temperature, axis=(-2, -1))
+
+    if highlight_track_id is not None:
+      i = highlight_track_id
+      cmap = matplotlib.colormaps["inferno"]
+      norm = matplotlib.colors.Normalize(
+          vmin=pos[0, i].min(), vmax=pos[0, i].max()
+      )
+      for frame_id, p in enumerate(pos[0, i]):
+        rr.set_time_sequence("frameid", frame_id)
+        rr.log_image("heatmap", cmap(norm(p)))
+
     points = model_utils.heatmaps_to_points(
         pos, im_shp, query_points=query_points
     )
@@ -779,6 +803,7 @@ class TAPIR(hk.Module):
       query_chunk_size: Optional[int] = None,
       causal_context: Optional[Sequence[Mapping[str, chex.Array]]] = None,
       get_causal_context: bool = False,
+      highlight_track_id: Optional[int] = None
   ) -> Mapping[str, Any]:
     """Estimates trajectories given features for a video and query features.
 
@@ -875,10 +900,17 @@ class TAPIR(hk.Module):
         )
       else:
         infer_query_points = None
+
+
+      hti = None
+      if highlight_track_id is not None:
+        if inv_perm[highlight_track_id] in perm_chunk:
+          hti = inv_perm[highlight_track_id]
       points, occlusion, expected_dist = infer(
           chunk,
           feature_grids.lowres[0],
           infer_query_points,
+          highlight_track_id=hti,
       )
       pts_iters[0].append(train2orig(points))
       occ_iters[0].append(occlusion)
@@ -977,6 +1009,7 @@ class TAPIR(hk.Module):
       query_chunk_size: Optional[int] = None,
       get_query_feats: bool = False,
       refinement_resolutions: Optional[List[Tuple[int, int]]] = None,
+      highlight_track_id: Optional[int] = None
   ) -> Mapping[str, chex.Array]:
     """Runs a forward pass of the model.
 
@@ -993,6 +1026,9 @@ class TAPIR(hk.Module):
         accuracy on resolutions higher than what TAPIR was trained on. If None,
         reasonable refinement resolutions will be inferred from the input video
         size.
+      highlight_track_id: Integer of track for which intermediate steps (cost volume
+        and iteratively optimized track) are visualized. If None, no intermediate
+        steps will be visualized.
 
     Returns:
       A dict of outputs, including:
@@ -1028,6 +1064,7 @@ class TAPIR(hk.Module):
         query_features,
         query_points,
         query_chunk_size,
+        highlight_track_id=highlight_track_id
     )
 
     # The prediction is the average of the iterative refinement output across

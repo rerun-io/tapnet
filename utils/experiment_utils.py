@@ -157,10 +157,10 @@ class NumpyFileCheckpointer(utils.Checkpointer):
     experiment_state = self.get_experiment_state(ckpt_series)
     with tf.io.gfile.GFile(self._checkpoint_file, 'rb') as fp:
       ckpt_state = np.load(fp, allow_pickle=True).item()
-    experiment_state.global_step = int(ckpt_state['global_step'])
+    experiment_state.global_step = int(ckpt_state.get('global_step', 0))
     exp_mod = experiment_state.experiment_module
     for attr, name in exp_mod.CHECKPOINT_ATTRS.items():
-      setattr(exp_mod, attr, utils.bcast_local_devices(ckpt_state[name]))
+      setattr(exp_mod, attr, utils.bcast_local_devices(ckpt_state.get(name, 0)))
 
   def restore_path(self, ckpt_series: str) -> Optional[str]:
     """Returns the restore path for the checkpoint, or None."""
