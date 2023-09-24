@@ -196,7 +196,7 @@ def log_query(
     """Log query image and points to rerun."""
     rr.set_time_sequence("frameid", 0)
     rr2.log("query_frame", rr2.Image(query_frame))
-    rr2.log("query_frame/query_points", rr2.Points2D(query_xys, radii=5, colors=colors))
+    rr2.log("query_frame/query_points", rr2.Points2D(query_xys, colors=colors))
 
 
 def log_video(frames: np.ndarray) -> None:
@@ -218,7 +218,6 @@ def log_tracks(
     tracks = transforms.convert_grid_coordinates(tracks, resize_wh, original_wh)
 
     # tracks has shape (num_tracks, num_frames, 2)
-    num_tracks = tracks.shape[0]
     num_frames = tracks.shape[1]
 
     for frame_id in range(num_frames):
@@ -227,7 +226,6 @@ def log_tracks(
             "frame/points" + suffix,
             rr2.Points2D(
                 tracks[visibles[:, frame_id], frame_id],
-                radii=5,
                 colors=colors[visibles[:, frame_id]],
             )
         )
@@ -235,18 +233,14 @@ def log_tracks(
         if frame_id == 0:
             continue
 
-        # TODO(roym899) should be doable without the for loop now
-        for track_id in range(num_tracks):
-            if visibles[track_id, frame_id - 1] and visibles[track_id, frame_id]:
-                rr2.log(
-                    f"frame/tracks{suffix}/#{track_id}",
-                    rr2.LineStrips2D(
-                        tracks[track_id, frame_id - 1 : frame_id + 1],
-                        colors=colors[track_id],
-                    )
-                )
-            else:
-                rr2.log(f"frame/tracks{suffix}/#{track_id}", rr2.Clear(False))
+        visible_track_mask = visibles[:, frame_id - 1] * visibles[:, frame_id]
+        rr2.log(
+            f"frame/tracks{suffix}",
+            rr2.LineStrips2D(
+                tracks[visible_track_mask, frame_id - 1 : frame_id + 1],
+                colors=colors[visible_track_mask],
+            )
+        )
 
 
 def sample_random_points(frame_max_idx, height, width, num_points):
