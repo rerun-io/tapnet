@@ -9,6 +9,7 @@ import matplotlib
 import mediapy as media
 import numpy as np
 import rerun as rr
+import rerun.experimental as rr2
 import tree
 
 from tapnet import tapir_model
@@ -178,13 +179,15 @@ def log_track_scalars(
     """Log scalars associated with track to rerun."""
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_scalar(
-            "occluded_prob" + suffix, jax.nn.sigmoid(occlusions[frame_id])
+        rr2.log(
+            "occluded_prob" + suffix,
+            rr2.TimeSeriesScalar(jax.nn.sigmoid(occlusions[frame_id])),
         )
-        rr.log_scalar(
-            "inaccurate_prob" + suffix, jax.nn.sigmoid(expected_dists[frame_id])
+        rr2.log(
+            "inaccurate_prob" + suffix,
+            rr2.TimeSeriesScalar(jax.nn.sigmoid(expected_dists[frame_id])),
         )
-        rr.log_scalar("visible" + suffix, visibles[frame_id])
+        rr2.log("visible" + suffix, rr2.TimeSeriesScalar(visibles[frame_id]))
 
 
 def log_query(
@@ -192,15 +195,15 @@ def log_query(
 ) -> None:
     """Log query image and points to rerun."""
     rr.set_time_sequence("frameid", 0)
-    rr.log_image("query_frame", query_frame)
-    rr.log_points("query_frame/query_points", query_xys, radii=5, colors=colors)
+    rr2.log("query_frame", rr2.Image(query_frame))
+    rr2.log("query_frame/query_points", rr2.Points2D(query_xys, radii=5, colors=colors))
 
 
 def log_video(frames: np.ndarray) -> None:
     """Log video frames to rerun."""
     for i, frame in enumerate(frames):
         rr.set_time_sequence("frameid", i)
-        rr.log_image("frame", frame)
+        rr2.log("frame", rr2.Image(frame))
 
 
 def log_tracks(
@@ -220,25 +223,30 @@ def log_tracks(
 
     for frame_id in range(num_frames):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_points(
+        rr2.log(
             "frame/points" + suffix,
-            tracks[visibles[:, frame_id], frame_id],
-            radii=5,
-            colors=colors[visibles[:, frame_id]],
+            rr2.Points2D(
+                tracks[visibles[:, frame_id], frame_id],
+                radii=5,
+                colors=colors[visibles[:, frame_id]],
+            )
         )
 
         if frame_id == 0:
             continue
 
+        # TODO(roym899) should be doable without the for loop now
         for track_id in range(num_tracks):
             if visibles[track_id, frame_id - 1] and visibles[track_id, frame_id]:
-                rr.log_line_segments(
+                rr2.log(
                     f"frame/tracks{suffix}/#{track_id}",
-                    tracks[track_id, frame_id - 1 : frame_id + 1],
-                    color=colors[track_id].tolist(),
+                    rr2.LineStrips2D(
+                        tracks[track_id, frame_id - 1 : frame_id + 1],
+                        colors=colors[track_id],
+                    )
                 )
             else:
-                rr.log_cleared(f"frame/tracks{suffix}/#{track_id}")
+                rr2.log(f"frame/tracks{suffix}/#{track_id}", rr2.Clear(False))
 
 
 def sample_random_points(frame_max_idx, height, width, num_points):
