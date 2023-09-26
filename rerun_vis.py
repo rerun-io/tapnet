@@ -9,7 +9,6 @@ import matplotlib
 import mediapy as media
 import numpy as np
 import rerun as rr
-import rerun.experimental as rr2
 import tree
 
 from tapnet import tapir_model
@@ -179,15 +178,15 @@ def log_track_scalars(
     """Log scalars associated with track to rerun."""
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
-        rr2.log(
+        rr.log(
             "occluded_prob" + suffix,
-            rr2.TimeSeriesScalar(jax.nn.sigmoid(occlusions[frame_id])),
+            rr.TimeSeriesScalar(jax.nn.sigmoid(occlusions[frame_id])),
         )
-        rr2.log(
+        rr.log(
             "inaccurate_prob" + suffix,
-            rr2.TimeSeriesScalar(jax.nn.sigmoid(expected_dists[frame_id])),
+            rr.TimeSeriesScalar(jax.nn.sigmoid(expected_dists[frame_id])),
         )
-        rr2.log("visible" + suffix, rr2.TimeSeriesScalar(visibles[frame_id]))
+        rr.log("visible" + suffix, rr.TimeSeriesScalar(visibles[frame_id]))
 
 
 def log_query(
@@ -195,15 +194,15 @@ def log_query(
 ) -> None:
     """Log query image and points to rerun."""
     rr.set_time_sequence("frameid", 0)
-    rr2.log("query_frame", rr2.Image(query_frame))
-    rr2.log("query_frame/query_points", rr2.Points2D(query_xys, colors=colors))
+    rr.log("query_frame", rr.Image(query_frame))
+    rr.log("query_frame/query_points", rr.Points2D(query_xys, colors=colors))
 
 
 def log_video(frames: np.ndarray) -> None:
     """Log video frames to rerun."""
     for i, frame in enumerate(frames):
         rr.set_time_sequence("frameid", i)
-        rr2.log("frame", rr2.Image(frame))
+        rr.log("frame", rr.Image(frame))
 
 
 def log_tracks(
@@ -222,9 +221,9 @@ def log_tracks(
 
     for frame_id in range(num_frames):
         rr.set_time_sequence("frameid", frame_id)
-        rr2.log(
+        rr.log(
             "frame/points" + suffix,
-            rr2.Points2D(
+            rr.Points2D(
                 tracks[visibles[:, frame_id], frame_id],
                 colors=colors[visibles[:, frame_id]],
             )
@@ -234,9 +233,9 @@ def log_tracks(
             continue
 
         visible_track_mask = visibles[:, frame_id - 1] * visibles[:, frame_id]
-        rr2.log(
+        rr.log(
             f"frame/tracks{suffix}",
-            rr2.LineStrips2D(
+            rr.LineStrips2D(
                 tracks[visible_track_mask, frame_id - 1 : frame_id + 1],
                 colors=colors[visible_track_mask],
             )

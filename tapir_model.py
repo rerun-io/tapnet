@@ -25,7 +25,6 @@ import jax
 import jax.numpy as jnp
 import matplotlib
 import rerun as rr
-import rerun.experimental as rr2
 
 from tapnet.models import resnet
 from tapnet.utils import model_utils
@@ -399,7 +398,7 @@ class TAPIR(hk.Module):
       )
       for frame_id, c in enumerate(cost_volume[:, 0, i]):
         rr.set_time_sequence("frameid", frame_id)
-        rr2.log("cost volume", rr2.Image(cmap(norm(c))))
+        rr.log("cost_volume", rr.Image(cmap(norm(c))))
 
     cost_volume = einshape('tbnhw->(tbn)hw1', cost_volume)
 
@@ -420,7 +419,7 @@ class TAPIR(hk.Module):
       )
       for frame_id, p in enumerate(pos[0, i]):
         rr.set_time_sequence("frameid", frame_id)
-        rr2.log("heatmap", rr2.Image(cmap(norm(p))))
+        rr.log("heatmap", rr.Image(cmap(norm(p))))
 
     points = model_utils.heatmaps_to_points(
         pos, im_shp, query_points=query_points
