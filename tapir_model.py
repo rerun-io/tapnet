@@ -398,7 +398,7 @@ class TAPIR(hk.Module):
       )
       for frame_id, c in enumerate(cost_volume[:, 0, i]):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_image("cost volume", cmap(norm(c)))
+        rr.log("cost_volume", rr.Image(cmap(norm(c))))
 
     cost_volume = einshape('tbnhw->(tbn)hw1', cost_volume)
 
@@ -419,7 +419,7 @@ class TAPIR(hk.Module):
       )
       for frame_id, p in enumerate(pos[0, i]):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_image("heatmap", cmap(norm(p)))
+        rr.log("heatmap", rr.Image(cmap(norm(p))))
 
     points = model_utils.heatmaps_to_points(
         pos, im_shp, query_points=query_points

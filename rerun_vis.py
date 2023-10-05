@@ -178,13 +178,15 @@ def log_track_scalars(
     """Log scalars associated with track to rerun."""
     for frame_id in range(len(occlusions)):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_scalar(
-            "occluded_prob" + suffix, jax.nn.sigmoid(occlusions[frame_id])
+        rr.log(
+            "occluded_prob" + suffix,
+            rr.TimeSeriesScalar(jax.nn.sigmoid(occlusions[frame_id])),
         )
-        rr.log_scalar(
-            "inaccurate_prob" + suffix, jax.nn.sigmoid(expected_dists[frame_id])
+        rr.log(
+            "inaccurate_prob" + suffix,
+            rr.TimeSeriesScalar(jax.nn.sigmoid(expected_dists[frame_id])),
         )
-        rr.log_scalar("visible" + suffix, visibles[frame_id])
+        rr.log("visible" + suffix, rr.TimeSeriesScalar(visibles[frame_id]))
 
 
 def log_query(
@@ -192,15 +194,15 @@ def log_query(
 ) -> None:
     """Log query image and points to rerun."""
     rr.set_time_sequence("frameid", 0)
-    rr.log_image("query_frame", query_frame)
-    rr.log_points("query_frame/query_points", query_xys, radii=5, colors=colors)
+    rr.log("query_frame", rr.Image(query_frame))
+    rr.log("query_frame/query_points", rr.Points2D(query_xys, colors=colors))
 
 
 def log_video(frames: np.ndarray) -> None:
     """Log video frames to rerun."""
     for i, frame in enumerate(frames):
         rr.set_time_sequence("frameid", i)
-        rr.log_image("frame", frame)
+        rr.log("frame", rr.Image(frame))
 
 
 def log_tracks(
@@ -215,30 +217,29 @@ def log_tracks(
     tracks = transforms.convert_grid_coordinates(tracks, resize_wh, original_wh)
 
     # tracks has shape (num_tracks, num_frames, 2)
-    num_tracks = tracks.shape[0]
     num_frames = tracks.shape[1]
 
     for frame_id in range(num_frames):
         rr.set_time_sequence("frameid", frame_id)
-        rr.log_points(
+        rr.log(
             "frame/points" + suffix,
-            tracks[visibles[:, frame_id], frame_id],
-            radii=5,
-            colors=colors[visibles[:, frame_id]],
+            rr.Points2D(
+                tracks[visibles[:, frame_id], frame_id],
+                colors=colors[visibles[:, frame_id]],
+            )
         )
 
         if frame_id == 0:
             continue
 
-        for track_id in range(num_tracks):
-            if visibles[track_id, frame_id - 1] and visibles[track_id, frame_id]:
-                rr.log_line_segments(
-                    f"frame/tracks{suffix}/#{track_id}",
-                    tracks[track_id, frame_id - 1 : frame_id + 1],
-                    color=colors[track_id].tolist(),
-                )
-            else:
-                rr.log_cleared(f"frame/tracks{suffix}/#{track_id}")
+        visible_track_mask = visibles[:, frame_id - 1] * visibles[:, frame_id]
+        rr.log(
+            f"frame/tracks{suffix}",
+            rr.LineStrips2D(
+                tracks[visible_track_mask, frame_id - 1 : frame_id + 1],
+                colors=colors[visible_track_mask],
+            )
+        )
 
 
 def sample_random_points(frame_max_idx, height, width, num_points):

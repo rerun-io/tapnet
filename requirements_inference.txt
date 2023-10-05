@@ -9,4 +9,4 @@ matplotlib
 mediapy
 opencv-python
 einshape
-rerun-sdk
+rerun-sdk>=0.9.0
